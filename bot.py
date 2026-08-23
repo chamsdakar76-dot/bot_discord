@@ -81,7 +81,11 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS welcome_settings(guild_id INTEGER P
                                                                 winner_game_only INTEGER,
                                                                 game_type TEXT)
             CREATE TABLE IF NOT EXISTS games_xp_gains_settings(guild_id INTEGER PRIMARY KEY,
-                                                                )""")
+                                                                game_bot_id INTEGER,
+                                                                game_name TEXT,
+                                                                ELO_enabled INTEGER,
+                                                                default_xp_gains INTEGER,
+                                                                xp_lose INTEGER)""")
 connection.commit()
 
 with open(os.path.join(cur_folder,"keys.json"),"r") as f:
@@ -210,7 +214,7 @@ async def on_message(message):
                     if game_type == "single_player(no_enemies)" and loser_username != "N/A":
                         await tell_admin_he_made_a_mistake("setleveling_by_games")
                         game_type = "multiplayer"
-                    #===== not completed =====
+                    elif game_type == "multiplayer"
 
 
 
