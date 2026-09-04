@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 import json
+import random
 import os
 import aiosqlite
 import sqlite3 as squilit
@@ -10,18 +11,16 @@ from typing import Literal
 async def tell_admin_he_made_a_mistake(mistake:str):
     if mistake == "setleveling_by_games":
         pass
-async def find_key_words(Message:str, msg:str, win_lose_only:int, win_only:int, win_game_only:int):
-    if (win_only == win_lose_only and win_only == 1) or (win_game_only == win_only and win_only == 1) or (win_game_only == win_lose_only and win_lose_only == 1):
+async def find_key_words(Message:str, msg:str):
+    if msg is not None:
         pass
     else:
         msg_list = msg.split()
         winner_index = msg_list.index("winner_username")
         loser_index = None
         game_index = None
-        if win_game_only == 0 and win_only == 0:
-            loser_index = msg_list.index("loser_username")
-        if win_only == 0 and win_lose_only == 0:
-            game_index = msg_list.index("game_name")
+        loser_index = msg_list.index("loser_username")
+        game_index = msg_list.index("game_name")
         msg_no_key = msg.replace("winner_username"," ")
         msg_no_key = msg_no_key.replace("loser_username"," ")
         msg_no_key = msg_no_key.replace("game_name"," ")
@@ -60,6 +59,24 @@ async def find_key_words(Message:str, msg:str, win_lose_only:int, win_only:int, 
                     sus_word_index = Message_list_copy.index(word)
                     Message_list_copy[sus_word_index] = " _ - _ "
     return winner_username,loser_username,finished_game_name
+async def spin(spin_parametres:dict):
+    spin = random.random()
+    spin_resultes = []
+    cumulative = 0
+    pourc_equal_spin = False
+    for thing, pourc in spin_parametres.items():
+        if pourc == spin:
+            pourc_equal_spin = True
+    for thing, pourc in spin_parametres.items():
+        if pourc_equal_spin :
+            if pourc == spin:
+                spin_resultes.append(thing)
+        else:
+            cumulative += pourc
+            if spin <= cumulative and spin > (cumulative - pourc):
+                spin_resultes.append(thing)
+    spin_resulte = random.choice(spin_resultes)
+    return spin_resulte
 
 #========= SETUP (Files,Token,Bot,On_ready) =========
 cur_folder = os.path.dirname(__file__)
@@ -76,9 +93,10 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS welcome_settings(guild_id INTEGER P
                                                                 message_form TEXT,
                                                                 game_name TEXT,
                                                                 command_user_id INTEGER,
-                                                                winner_only INTEGER,
-                                                                winner_loser_only INTEGER,
-                                                                winner_game_only INTEGER,
+                                                                winner_N/A INTEGER,
+                                                                loser_N/A INTEGER,
+                                                                game_N/A INTEGER,
+                                                                game's_prefix_command TEXT,
                                                                 game_type TEXT)
             CREATE TABLE IF NOT EXISTS games_xp_gains_settings(guild_id INTEGER PRIMARY KEY,
                                                                 game_bot_id INTEGER,
@@ -87,6 +105,7 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS welcome_settings(guild_id INTEGER P
                                                                 default_xp_gains INTEGER,
                                                                 xp_lose INTEGER)""")
 connection.commit()
+#empty variables have "NULL" as a value in db files
 
 with open(os.path.join(cur_folder,"keys.json"),"r") as f:
     keys = json.load(f)
@@ -126,46 +145,12 @@ async def setwelcome(interraction : discord.Interaction, enabled : bool, channel
 @bot.tree.command(name="setleveling_by_games",description="set game_bot and his message_form and his games|Do /help'command_name' to know more")
 @discord.app_commands.checks.has_permissions(administrator=True)
 async def setleveling_by_games(interraction : discord.Interaction, enabled : bool, game_bot : discord.member, message_form : str, game_name : str, game_type : Literal["single_player(no_enemies)","multiplayer"]):
-    if enabled == True:
-        enabled = 1
-    if enabled == False:
-        enabled = 0
-    if enabled == 1:
-        if game_bot is not None:
-            if "winner_username" in message_form:
-                if "loser_username" in message_form and "game_name" in message_form:
-                    winner_only = 0
-                    winner_loser_only = 0
-                    winner_game_only = 0
-                elif "loser_username" in message_form:
-                    winner_loser_only = 1
-                    winner_only = 0
-                    winner_game_only = 0
-                elif "game_name" in message_form:
-                    winner_game_only = 1
-                    winner_only = 0
-                    winner_loser_only = 0
-                else:
-                    winner_loser_only = 0
-                    winner_only = 1
-                    winner_game_only = 0
-            else:
-                interraction.response.send_message("There should be at least winner_username in message_form")
-                async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
-                    db.execute("INSERT OR REPLACE INTO leveling_games_settings (guild_id,enabled,game_bot_id,message_form,game_name,command_user_id,winner_only,winner_loser_only,winner_game_only,game_type) VALUES (?,?,?,?,?,?,?,?,?)",(interraction.guild.id,enabled,game_bot.id,message_form,game_name,interraction.user.id,winner_only,winner_loser_only,winner_game_only,game_type))
-                    db.commit()
-                interraction.response.send_message("Done")
-        else:
-            interraction.response.send_message("Pls set a bot that exists in your server")
-    else:
-        interraction.response.send_message("leveling by games disabled.")
+    pass
 
 @bot.tree.command(name="helpsetleveling_by_games",description="know really important things about /setleveling_by_games")
 @discord.app_commands.checks.has_permissions(administrator=True)
 async def helpsetleveling_by_games(interraction : discord.Interaction):
-    interraction.response.send_message("""set a bot that exist in your server and that affords games , and set the form of his message that appears when the game is done and set the name of his games .
-    in setting the form of the message dont forget these keys words :
-    winner_name | loser_name | winner_username | loser_username | game""")
+    interraction.response.send_message("_")
 
 #========= EVENTS ==========
 @bot.event
@@ -206,15 +191,12 @@ async def on_message(message):
     if message.author.bot:
         if message.author != bot.user:
             async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
-                cursor = await db.execute("SELECT (enabled,game_bot_id,message_form,game_name,command_user_id,winner_only,winner_loser_only,winner_game_only,game_type) FROM leveling_games_settings WHERE guild_id = ?",(message.guild.id,))
-                enabled,game_bot_id,message_form,game_name,command_user_id,winner_only,winner_loser_only,winner_game_only,game_type = await cursor.fetchone()
-            if enabled == 1:
-                if message.author.id == game_bot_id:
-                    winner_username,loser_username,finished_game_name = await find_key_words(message,message_form,winner_loser_only,winner_only,winner_game_only)
-                    if game_type == "single_player(no_enemies)" and loser_username != "N/A":
-                        await tell_admin_he_made_a_mistake("setleveling_by_games")
-                        game_type = "multiplayer"
-                    elif game_type == "multiplayer"
+                pass
+
+
+
+
+
 
 
 
@@ -226,5 +208,3 @@ async def on_message(message):
 
 
 bot.run(TOKEN)
-
-
