@@ -2,10 +2,12 @@ import discord
 from discord.ext import commands
 import json
 import random
+import asyncio
 import os
 import aiosqlite
+import math
 import sqlite3 as squilit
-from typing import Literal
+from typing import Literal, Any
 
 #========= FUNCTIONS =========
 async def tell_admin_he_made_a_mistake(mistake:str):
@@ -59,51 +61,40 @@ async def find_key_words(Message:str, msg:str):
                     sus_word_index = Message_list_copy.index(word)
                     Message_list_copy[sus_word_index] = " _ - _ "
     return winner_username,loser_username,finished_game_name
-async def spin(spin_parametres:dict):
-    spin = random.random()
-    spin_resultes = []
-    cumulative = 0
-    pourc_equal_spin = False
-    for thing, pourc in spin_parametres.items():
-        if pourc == spin:
-            pourc_equal_spin = True
-    for thing, pourc in spin_parametres.items():
-        if pourc_equal_spin :
-            if pourc == spin:
-                spin_resultes.append(thing)
-        else:
-            cumulative += pourc
-            if spin <= cumulative and spin > (cumulative - pourc):
-                spin_resultes.append(thing)
-    spin_resulte = random.choice(spin_resultes)
-    return spin_resulte
+def arrange_dict(dict_:dict[Any,float]):
+    dict_ = dict(sorted(dict_.items(),key=lambda x : x[1]))
+    return dict_
 
 #========= SETUP (Files,Token,Bot,On_ready) =========
 cur_folder = os.path.dirname(__file__)
 
 connection = squilit.connect(os.path.join(cur_folder,"data_bot.db"))
 cursor = connection.cursor()
-cursor.execute("""CREATE TABLE IF NOT EXISTS welcome_settings(guild_id INTEGER PRIMARY KEY,
+cursor.executescript("""CREATE TABLE IF NOT EXISTS welcome_settings(guild_id INTEGER PRIMARY KEY,
                                                                enabled INTEGER,
                                                                channel_id INTEGER,
-                                                               welcome_mess TEXT)
+                                                               welcome_mess TEXT);
             CREATE TABLE IF NOT EXISTS leveling_games_settings(guild_id INTEGER PRIMARY KEY,
                                                                 enabled INTEGER,
                                                                 game_bot_id INTEGER,
                                                                 message_form TEXT,
                                                                 game_name TEXT,
                                                                 command_user_id INTEGER,
-                                                                winner_N/A INTEGER,
-                                                                loser_N/A INTEGER,
-                                                                game_N/A INTEGER,
-                                                                game's_prefix_command TEXT,
-                                                                game_type TEXT)
+                                                                winner_N_A INTEGER,
+                                                                loser_N_A INTEGER,
+                                                                game_N_A INTEGER,
+                                                                game_s_prefix_command TEXT,
+                                                                game_type TEXT);
             CREATE TABLE IF NOT EXISTS games_xp_gains_settings(guild_id INTEGER PRIMARY KEY,
                                                                 game_bot_id INTEGER,
                                                                 game_name TEXT,
                                                                 ELO_enabled INTEGER,
                                                                 default_xp_gains INTEGER,
-                                                                xp_lose INTEGER)""")
+                                                                xp_lose INTEGER);
+            CREATE TABLE IF NOT EXISTS invite_points(guild_id INTEGER,
+                                                    user_id INTEGER,
+                                                    points INTEGER DEFAULT 0,
+                                                    PRIMARY KEY (guild_id, user_id))""")
 connection.commit()
 #empty variables have "NULL" as a value in db files
 
@@ -115,15 +106,107 @@ Intents.members = True
 Intents.message_content = True
 bot = commands.Bot(command_prefix="!",intents=Intents)
 
+invites_data = {}
 @bot.event
 async def on_ready():
     for guild in bot.guilds:
         print(f"syncing to: {guild.name}")
         synced = await bot.tree.sync()
         print(f"synced {len(synced)} commands")
+        invites_data[guild.id] = await guild.invites()
     print("Bot connected succesfully")
 
 #========= SLASH COMMANDS =========
+@bot.tree.command(name="spin",description="enter names and their pourcentage to spin")
+async def spin(interraction : discord.Interaction,spin_parametres:str):
+    async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
+        cursor = await db.execute("SELECT points FROM invite_points WHERE (guild_id,user_id) = (?,?)",(interraction.guild.id,interraction.user.id))
+        results = await cursor.fetchone()
+    if results is None:
+        user_points = 0
+    else:
+        user_points = results[0]
+    if user_points < 1:
+        await interraction.response.send_message("You dont have enough points ! You need at least 1 point for a spin and 2 points for a legendary one")
+    else:
+        if not "=" in spin_parametres or not "," in spin_parametres or not ("1" in spin_parametres or "2" in spin_parametres or "3" in spin_parametres or "4" in spin_parametres or "5" in spin_parametres or "6" in spin_parametres or "7" in spin_parametres or "8" in spin_parametres or "9" in spin_parametres):
+            await interraction.response.send_message('pls enter it like a=0.7,b=0.2,c=0.1')
+        else:
+            spin_parametres = spin_parametres.strip().replace(",","=").split("=")
+            keys = []
+            values = []
+            for i in spin_parametres:
+                if i.replace(".","0").isdigit():
+                    i = float(i)
+                    values.append(i)
+                else:
+                    keys.append(i)
+            spin_parametres = dict(zip(keys,values))
+            while True:
+                spin_pourc = random.random()
+                if spin_pourc != 1 and spin_pourc != 0:
+                    break
+            spin_resultes = []
+            cumulative = 0
+            spin_parametres = arrange_dict(spin_parametres)
+            for thing, pourc in spin_parametres.items():
+                cumulative += pourc
+                if (spin_pourc < cumulative or math.isclose(spin_pourc,cumulative)) and spin_pourc > (cumulative - pourc):
+                    spin_resultes.append(thing)
+            if len(spin_resultes) > 1:
+                spin_resulte = random.choice(spin_resultes)
+            else:
+                spin_resulte = spin_resultes[0]
+            await interraction.response.send_message(f"Your spin resulte is {spin_resulte} !")
+            async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
+                await db.execute("INSERT OR REPLACE INTO invite_points (guild_id,user_id,points) VALUES (?,?,?)",(interraction.guild.id,interraction.user.id,user_points-1))
+                await db.commit()
+
+@bot.tree.command(name="legendary_spin",description="enter names and their pourcentage to spin")
+async def legendary_spin(interraction : discord.Interaction,spin_parametres:str):
+    async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
+        cursor = await db.execute("SELECT points FROM invite_points WHERE (guild_id,user_id) = (?,?)",(interraction.guild.id,interraction.user.id))
+        results = await cursor.fetchone()
+    if results is None:
+        user_points = 0
+    else:
+        user_points = results[0]
+    if user_points < 2:
+        await interraction.response.send_message("You dont have enough points ! You need at least 1 point for a spin and 2 points for a legendary one")
+    else:
+        if not "=" in spin_parametres or not "," in spin_parametres or not ("1" in spin_parametres or "2" in spin_parametres or "3" in spin_parametres or "4" in spin_parametres or "5" in spin_parametres or "6" in spin_parametres or "7" in spin_parametres or "8" in spin_parametres or "9" in spin_parametres):
+            await interraction.response.send_message('pls enter it like a=0.7,b=0.2,c=0.1')
+        else:
+            spin_parametres = spin_parametres.strip().replace(",","=").split("=")
+            keys = []
+            values = []
+            for i in spin_parametres:
+                if i.replace(".","0").isdigit():
+                    i = float(i)
+                    values.append(i)
+                else:
+                    keys.append(i)
+            spin_parametres = dict(zip(keys,values))
+            while True:
+                spin_pourc = random.random()
+                if spin_pourc != 1 and spin_pourc != 0:
+                    break
+            spin_resultes = []
+            cumulative = 0
+            spin_parametres = arrange_dict(spin_parametres)
+            for thing, pourc in spin_parametres.items():
+                cumulative += pourc
+                if (spin_pourc < cumulative or math.isclose(spin_pourc,cumulative)) and spin_pourc > (cumulative - pourc):
+                    spin_resultes.append(thing)
+            if len(spin_resultes) > 1:
+                spin_resulte = random.choice(spin_resultes)
+            else:
+                spin_resulte = spin_resultes[0]
+            await interraction.response.send_message(f"Your spin resulte is {spin_resulte} !")
+            async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
+                await db.execute("INSERT OR REPLACE INTO invite_points (guild_id,user_id,points) VALUES (?,?,?)",(interraction.guild.id,interraction.user.id,user_points-2))
+                await db.commit()
+
 @bot.tree.command(name="setwelcome",description="set welcome channel&mesg |display_name=name|member.name=username|member.mention=mention")
 @discord.app_commands.checks.has_permissions(administrator=True)
 async def setwelcome(interraction : discord.Interaction, enabled : bool, channel : discord.TextChannel, welcome_message : str):
@@ -142,19 +225,43 @@ async def setwelcome(interraction : discord.Interaction, enabled : bool, channel
             await db.commit()
         await interraction.response.send_message("Done !")
 
-@bot.tree.command(name="setleveling_by_games",description="set game_bot and his message_form and his games|Do /help'command_name' to know more")
+@bot.tree.command(name="setleveling_by_games",description="not completed")
 @discord.app_commands.checks.has_permissions(administrator=True)
-async def setleveling_by_games(interraction : discord.Interaction, enabled : bool, game_bot : discord.member, message_form : str, game_name : str, game_type : Literal["single_player(no_enemies)","multiplayer"]):
-    pass
+async def setleveling_by_games(interraction : discord.Interaction, enabled : bool, game_bot : discord.Member, message_form : str, game_name : str, game_type : Literal["single_player(no_enemies)","multiplayer"]):
+    await interraction.response.send_message("not completed yet")
 
-@bot.tree.command(name="helpsetleveling_by_games",description="know really important things about /setleveling_by_games")
+@bot.tree.command(name="helpsetleveling_by_games",description="not completed")
 @discord.app_commands.checks.has_permissions(administrator=True)
 async def helpsetleveling_by_games(interraction : discord.Interaction):
-    interraction.response.send_message("_")
+    await interraction.response.send_message("_")
 
 #========= EVENTS ==========
 @bot.event
 async def on_member_join(member):
+    global invites_data
+    invites = await member.guild.invites()
+    member_used_link = {}
+    for invite in invites:
+        old_invite = None
+        for invite_data in invites_data[member.guild.id]:
+            if invite_data.code == invite.code:
+                old_invite = invite_data
+        if old_invite is not None:
+            member_used_link[invite.code] = (invite.uses - old_invite.uses)
+        else:
+            member_used_link[invite.code] = 0
+        async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
+            cursor = await db.execute("SELECT points FROM invite_points WHERE (guild_id,user_id) = (?,?)",(member.guild.id,invite.inviter.id))
+            resulte = await cursor.fetchone()
+        if resulte is None:
+            total_points = 1
+        else:
+            old_points = resulte[0]
+            total_points = old_points + 1
+        async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
+            await db.execute("INSERT OR REPLACE INTO invite_points (guild_id,user_id,points) VALUES (?,?,?)",(member.guild.id,invite.inviter.id,total_points))
+            await db.commit()
+        invites_data[member.guild.id] = await member.guild.invites()
     async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
         cursor = await db.execute("SELECT enabled, channel_id, welcome_mess FROM welcome_settings WHERE guild_id = ?",(member.guild.id,))
         welcome_settings = await cursor.fetchone()
@@ -166,7 +273,7 @@ async def on_member_join(member):
         message = None
     if enabled != 0:
         if channel_id is None:
-            random_bot_text_channel : discord.TextChannel
+            random_bot_text_channel = None
             text_channels = member.guild.text_channels
             if text_channels != None:
                 for channel in text_channels:
@@ -208,3 +315,4 @@ async def on_message(message):
 
 
 bot.run(TOKEN)
+    
