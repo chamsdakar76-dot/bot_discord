@@ -235,33 +235,68 @@ async def setleveling_by_games(interraction : discord.Interaction, enabled : boo
 async def helpsetleveling_by_games(interraction : discord.Interaction):
     await interraction.response.send_message("_")
 
-#========= EVENTS ==========
+#========= EVENTS =========
+on_join_locks = {}
 @bot.event
 async def on_member_join(member):
     global invites_data
-    invites = await member.guild.invites()
-    member_used_link = {}
-    for invite in invites:
-        old_invite = None
-        for invite_data in invites_data[member.guild.id]:
-            if invite_data.code == invite.code:
-                old_invite = invite_data
-        if old_invite is not None:
-            member_used_link[invite.code] = (invite.uses - old_invite.uses)
-        else:
-            member_used_link[invite.code] = 0
-        async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
-            cursor = await db.execute("SELECT points FROM invite_points WHERE (guild_id,user_id) = (?,?)",(member.guild.id,invite.inviter.id))
-            resulte = await cursor.fetchone()
-        if resulte is None:
-            total_points = 1
-        else:
-            old_points = resulte[0]
-            total_points = old_points + 1
-        async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
-            await db.execute("INSERT OR REPLACE INTO invite_points (guild_id,user_id,points) VALUES (?,?,?)",(member.guild.id,invite.inviter.id,total_points))
-            await db.commit()
-        invites_data[member.guild.id] = await member.guild.invites()
+    global on_join_locks
+    if member.guild.id not in on_join_locks:
+        on_join_locks[member.guild.id] = asyncio.Lock()
+    async with on_join_locks[member.guild.id]:
+        invites = await member.guild.invites()
+        missed_invites = []
+        check_missed_invites = 0
+        for invite in invites:
+            member_used_link = 0
+            inviter_id = None
+            old_invite_now = None
+            invite_missed = True
+            for invite_data in invites_data[member.guild.id]:
+                if invite_data.code == invite.code:
+                    old_invite_now = invite_data
+                elif check_missed_invites == 0:
+                    invite_missed = True
+                    for i in invites:
+                        if invite_data.code == i.code:
+                            invite_missed = False
+                    if invite_missed:
+                        missed_invites.append(invite_data)
+            if old_invite_now is not None:
+                if old_invite_now.inviter is not None:
+                    inviter_id = old_invite_now.inviter.id
+                    member_used_link = invite.uses - old_invite_now.uses
+            elif missed_invites:
+                for missed_invite in missed_invites:
+                    if missed_invite.expires_at is not None :
+                        now = discord.utils.utcnow()
+                        if missed_invite.expires_at > now:
+                            if missed_invite.max_uses > 0:
+                                if missed_invite.uses == (missed_invite.max_uses - 1):
+                                    if missed_invite.inviter is not None:
+                                        inviter_id = missed_invite.inviter.id
+                                        member_used_link = 1
+                    else:
+                        if missed_invite.max_uses > 0:
+                            if missed_invite.uses == (missed_invite.max_uses - 1):
+                                if missed_invite.inviter is not None:
+                                    inviter_id = missed_invite.inviter.id
+                                    member_used_link = 1
+            if inviter_id is not None:
+                if inviter_id != member.id and member_used_link != 0:
+                    async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
+                        cursor = await db.execute("SELECT points FROM invite_points WHERE (guild_id,user_id) = (?,?)",(member.guild.id,inviter_id))
+                        resulte = await cursor.fetchone()
+                    if resulte is None:
+                        total_points = 1
+                    else:
+                        old_points = resulte[0]
+                        total_points = old_points + 1
+                    async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
+                        await db.execute("INSERT OR REPLACE INTO invite_points (guild_id,user_id,points) VALUES (?,?,?)",(member.guild.id,inviter_id,total_points))
+                        await db.commit()
+            check_missed_invites = 1
+        invites_data[member.guild.id] = invites
     async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
         cursor = await db.execute("SELECT enabled, channel_id, welcome_mess FROM welcome_settings WHERE guild_id = ?",(member.guild.id,))
         welcome_settings = await cursor.fetchone()
@@ -300,7 +335,13 @@ async def on_message(message):
             async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
                 pass
 
-
+@bot.event
+async def on_guild_join(guild):
+    global invites_data
+    invites_data[guild.id] = await guild.invites()
+    print("joined a new server!!!!")
+    if guild.system_channel:
+        await guild.system_channel.send("Thanks for adding us in this server")
 
 
 
