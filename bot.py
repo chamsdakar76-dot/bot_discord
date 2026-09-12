@@ -10,6 +10,13 @@ import sqlite3 as squilit
 from typing import Literal, Any
 
 #========= FUNCTIONS =========
+async def read_json(file_name):
+    with open(os.path.join(cur_folder,file_name),"r") as f:
+        result = json.load(f)
+    return result
+async def write_in_json(file_name,new_content):
+    with open(os.path.join(cur_folder,file_name),"w") as f:
+        json.dump(new_content,f)
 async def tell_admin_he_made_a_mistake(mistake:str):
     if mistake == "setleveling_by_games":
         pass
@@ -64,6 +71,17 @@ async def find_key_words(Message:str, msg:str):
 def arrange_dict(dict_:dict[Any,float]):
     dict_ = dict(sorted(dict_.items(),key=lambda x : x[1]))
     return dict_
+def digitkey_to_floatkey(dict_:dict,big_int_key:bool):
+    dict_copy = dict_.copy()
+    for key,value in dict_copy.items():
+        if key.isdigit():
+            del dict_[key]
+            if not big_int_key:
+                key = float(key)
+            else:
+                key = int(key)
+            dict_[key] = value
+    return dict_
 
 #========= SETUP (Files,Token,Bot,On_ready) =========
 cur_folder = os.path.dirname(__file__)
@@ -94,7 +112,11 @@ cursor.executescript("""CREATE TABLE IF NOT EXISTS welcome_settings(guild_id INT
             CREATE TABLE IF NOT EXISTS invite_points(guild_id INTEGER,
                                                     user_id INTEGER,
                                                     points INTEGER DEFAULT 0,
-                                                    PRIMARY KEY (guild_id, user_id))""")
+                                                    PRIMARY KEY (guild_id, user_id));
+            CREATE TABLE IF NOT EXISTS spin_points(guild_id INTEGER PRIMARY KEY,
+                                                    legendary_spin_points INTEGER DEFAULT 2,
+                                                    normal_spin_points INTEGER DEFAULT 1,
+                                                    command_user TEXT)""")
 connection.commit()
 #empty variables have "NULL" as a value in db files
 
@@ -117,8 +139,86 @@ async def on_ready():
     print("Bot connected succesfully")
 
 #========= SLASH COMMANDS =========
-@bot.tree.command(name="spin",description="enter names and their pourcentage to spin")
-async def spin(interraction : discord.Interaction,spin_parametres:str):
+@bot.tree.command(name="set_points_for_spins",description="enter points needed for a normal spin and a legendary one")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def set_points_for_spins(interraction:discord.Interaction,points_for_normal_spin:int,points_for_legendary_spin:int):
+    if not isinstance(points_for_legendary_spin,int) or not isinstance(points_for_normal_spin,int):
+        await interraction.response.send_message("You should enter numbers !!!")
+        return
+    async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
+        await db.execute("INSERT OR REPLACE INTO spin_points (guild_id,legendary_spin_points,normal_spin_points,command_user) VALUES (?,?,?,?)",(interraction.guild.id,points_for_legendary_spin,points_for_normal_spin,interraction.user.name))
+        await db.commit()
+    await interraction.response.send_message("DONE !")
+    
+@bot.tree.command(name="set_spin",description="enter names and their pourcentage in spin")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def set_spin(interraction:discord.Interaction,items_parameter:str):
+    if not "=" in items_parameter or not "," in items_parameter or not ("1" in items_parameter or "2" in items_parameter or "3" in items_parameter or "4" in items_parameter or "5" in items_parameter or "6" in items_parameter or "7" in items_parameter or "8" in items_parameter or "9" in items_parameter):
+        await interraction.response.send_message('pls enter it like a=0.7,b=0.2,c=0.1')
+    else:
+        spin_parameters = items_parameter.strip().replace(",","=").split("=")
+        keys = []
+        values = []
+        total_value = 0
+        for i in spin_parameters:
+            if i.replace(".","0").isdigit():
+                i = float(i)
+                values.append(i)
+                total_value += i
+            else:
+                keys.append(i)
+        if not math.isclose(total_value,1):
+            await interraction.response.send_message("the total pourcentages value should be 1 !")
+        else:
+            spin_parameters = dict(zip(keys,values))
+            old_spin_parameters = await read_json("spin_parameters.json")
+            old_spin_parameters = digitkey_to_floatkey(old_spin_parameters,True)
+            old_spin_parameters[interraction.guild.id] = {interraction.user.name : spin_parameters}
+            await write_in_json("spin_parameters.json",old_spin_parameters)
+            await interraction.response.send_message("DONE !")
+
+@bot.tree.command(name="set_legendary_spin",description="enter names and their pourcentage in spin")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def set_legendary_spin(interraction:discord.Interaction,items_parameter:str):
+    if not "=" in items_parameter or not "," in items_parameter or not ("1" in items_parameter or "2" in items_parameter or "3" in items_parameter or "4" in items_parameter or "5" in items_parameter or "6" in items_parameter or "7" in items_parameter or "8" in items_parameter or "9" in items_parameter):
+        await interraction.response.send_message('pls enter it like a=0.7,b=0.2,c=0.1')
+    else:
+        spin_parameters = items_parameter.strip().replace(",","=").split("=")
+        keys = []
+        values = []
+        total_value = 0
+        for i in spin_parameters:
+            if i.replace(".","0").isdigit():
+                i = float(i)
+                values.append(i)
+                total_value += i
+            else:
+                keys.append(i)
+        if not math.isclose(total_value,1):
+            await interraction.response.send_message("the total pourcentages value should be 1 !")
+        else:
+            spin_parameters = dict(zip(keys,values))
+            old_spin_parameters = await read_json("legendary_spin_parameters.json")
+            old_spin_parameters = digitkey_to_floatkey(old_spin_parameters,True)
+            old_spin_parameters[interraction.guild.id] = {interraction.user.name : spin_parameters}
+            await write_in_json("legendary_spin_parameters.json",old_spin_parameters)
+            await interraction.response.send_message("DONE !")
+
+@bot.tree.command(name="spin",description="normal spin for items set by admins")
+async def spin(interraction : discord.Interaction):
+    spin_parameters = await read_json("spin_parameters.json")
+    spin_parameters = digitkey_to_floatkey(spin_parameters,True)
+    async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
+        cursor = await db.execute("SELECT normal_spin_points FROM spin_points WHERE guild_id = ?",(interraction.guild.id,))
+        result = await cursor.fetchone()
+    normal_points = result[0] if result is not None else 1
+    if interraction.guild.id not in spin_parameters:
+        await interraction.response.send_message("The admins didnt set items to spin !")
+        return
+    command_user = None
+    for i in spin_parameters[interraction.guild.id].keys():
+        command_user = i
+    spin_parameters = spin_parameters[interraction.guild.id][command_user]
     async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
         cursor = await db.execute("SELECT points FROM invite_points WHERE (guild_id,user_id) = (?,?)",(interraction.guild.id,interraction.user.id))
         results = await cursor.fetchone()
@@ -126,30 +226,18 @@ async def spin(interraction : discord.Interaction,spin_parametres:str):
         user_points = 0
     else:
         user_points = results[0]
-    if user_points < 1:
+    if user_points < normal_points:
         await interraction.response.send_message("You dont have enough points ! You need at least 1 point for a spin and 2 points for a legendary one")
     else:
-        if not "=" in spin_parametres or not "," in spin_parametres or not ("1" in spin_parametres or "2" in spin_parametres or "3" in spin_parametres or "4" in spin_parametres or "5" in spin_parametres or "6" in spin_parametres or "7" in spin_parametres or "8" in spin_parametres or "9" in spin_parametres):
-            await interraction.response.send_message('pls enter it like a=0.7,b=0.2,c=0.1')
-        else:
-            spin_parametres = spin_parametres.strip().replace(",","=").split("=")
-            keys = []
-            values = []
-            for i in spin_parametres:
-                if i.replace(".","0").isdigit():
-                    i = float(i)
-                    values.append(i)
-                else:
-                    keys.append(i)
-            spin_parametres = dict(zip(keys,values))
-            while True:
-                spin_pourc = random.random()
-                if spin_pourc != 1 and spin_pourc != 0:
-                    break
+            spin_pourc = random.random()
+            if spin_pourc == 1:
+                spin_pourc -= 0.01
+            elif spin_pourc == 0:
+                spin_pourc += 0.01
             spin_resultes = []
             cumulative = 0
-            spin_parametres = arrange_dict(spin_parametres)
-            for thing, pourc in spin_parametres.items():
+            spin_parameters = arrange_dict(spin_parameters)
+            for thing, pourc in spin_parameters.items():
                 cumulative += pourc
                 if (spin_pourc < cumulative or math.isclose(spin_pourc,cumulative)) and spin_pourc > (cumulative - pourc):
                     spin_resultes.append(thing)
@@ -159,11 +247,24 @@ async def spin(interraction : discord.Interaction,spin_parametres:str):
                 spin_resulte = spin_resultes[0]
             await interraction.response.send_message(f"Your spin resulte is {spin_resulte} !")
             async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
-                await db.execute("INSERT OR REPLACE INTO invite_points (guild_id,user_id,points) VALUES (?,?,?)",(interraction.guild.id,interraction.user.id,user_points-1))
+                await db.execute("INSERT OR REPLACE INTO invite_points (guild_id,user_id,points) VALUES (?,?,?)",(interraction.guild.id,interraction.user.id,user_points-normal_points))
                 await db.commit()
 
-@bot.tree.command(name="legendary_spin",description="enter names and their pourcentage to spin")
-async def legendary_spin(interraction : discord.Interaction,spin_parametres:str):
+@bot.tree.command(name="legendary_spin",description="legendary spin for items set by admins")
+async def legendary_spin(interraction : discord.Interaction):
+    spin_parameters = await read_json("legendary_spin_parameters.json")
+    spin_parameters = digitkey_to_floatkey(spin_parameters,True)
+    async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
+        cursor = await db.execute("SELECT legendary_spin_points FROM spin_points WHERE guild_id = ?",(interraction.guild.id,))
+        result = await cursor.fetchone()
+    legendary_points = result[0] if result is not None else 2
+    if interraction.guild.id not in spin_parameters:
+        await interraction.response.send_message("The admins didnt set items to spin !")
+        return
+    command_user = None
+    for i in spin_parameters[interraction.guild.id].keys():
+        command_user = i
+    spin_parameters = spin_parameters[interraction.guild.id][command_user]
     async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
         cursor = await db.execute("SELECT points FROM invite_points WHERE (guild_id,user_id) = (?,?)",(interraction.guild.id,interraction.user.id))
         results = await cursor.fetchone()
@@ -171,30 +272,18 @@ async def legendary_spin(interraction : discord.Interaction,spin_parametres:str)
         user_points = 0
     else:
         user_points = results[0]
-    if user_points < 2:
+    if user_points < legendary_points:
         await interraction.response.send_message("You dont have enough points ! You need at least 1 point for a spin and 2 points for a legendary one")
     else:
-        if not "=" in spin_parametres or not "," in spin_parametres or not ("1" in spin_parametres or "2" in spin_parametres or "3" in spin_parametres or "4" in spin_parametres or "5" in spin_parametres or "6" in spin_parametres or "7" in spin_parametres or "8" in spin_parametres or "9" in spin_parametres):
-            await interraction.response.send_message('pls enter it like a=0.7,b=0.2,c=0.1')
-        else:
-            spin_parametres = spin_parametres.strip().replace(",","=").split("=")
-            keys = []
-            values = []
-            for i in spin_parametres:
-                if i.replace(".","0").isdigit():
-                    i = float(i)
-                    values.append(i)
-                else:
-                    keys.append(i)
-            spin_parametres = dict(zip(keys,values))
-            while True:
-                spin_pourc = random.random()
-                if spin_pourc != 1 and spin_pourc != 0:
-                    break
+            spin_pourc = random.random()
+            if spin_pourc == 1:
+                spin_pourc -= 0.01
+            elif spin_pourc == 0:
+                spin_pourc += 0.01
             spin_resultes = []
             cumulative = 0
-            spin_parametres = arrange_dict(spin_parametres)
-            for thing, pourc in spin_parametres.items():
+            spin_parameters = arrange_dict(spin_parameters)
+            for thing, pourc in spin_parameters.items():
                 cumulative += pourc
                 if (spin_pourc < cumulative or math.isclose(spin_pourc,cumulative)) and spin_pourc > (cumulative - pourc):
                     spin_resultes.append(thing)
@@ -204,8 +293,43 @@ async def legendary_spin(interraction : discord.Interaction,spin_parametres:str)
                 spin_resulte = spin_resultes[0]
             await interraction.response.send_message(f"Your spin resulte is {spin_resulte} !")
             async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
-                await db.execute("INSERT OR REPLACE INTO invite_points (guild_id,user_id,points) VALUES (?,?,?)",(interraction.guild.id,interraction.user.id,user_points-2))
+                await db.execute("INSERT OR REPLACE INTO invite_points (guild_id,user_id,points) VALUES (?,?,?)",(interraction.guild.id,interraction.user.id,user_points-legendary_points))
                 await db.commit()
+
+@bot.tree.command(name="last_one_set_spin_items",description="know who is the last admin who set spin items")
+async def last_one_set_spin_items(interraction : discord.Interaction):
+    spin_parameters = await read_json("spin_parameters.json")
+    spin_parameters = digitkey_to_floatkey(spin_parameters,True)
+    if interraction.guild.id not in spin_parameters:
+        await interraction.response.send_message("no one set spin items in this server.")
+    else:
+        command_user = None
+        for i in spin_parameters[interraction.guild.id].keys():
+            command_user = i
+        await interraction.response.send_message(f"Its {command_user} !")
+
+@bot.tree.command(name="last_one_set_legendary_items",description="know who is the last admin who set spin items")
+async def last_one_set_legendary_items(interraction : discord.Interaction):
+    spin_parameters = await read_json("legendary_spin_parameters.json")
+    spin_parameters = digitkey_to_floatkey(spin_parameters,True)
+    if interraction.guild.id not in spin_parameters:
+        await interraction.response.send_message("no one set legendary spin items in this server.")
+    else:
+        command_user = None
+        for i in spin_parameters[interraction.guild.id].keys():
+            command_user = i
+        await interraction.response.send_message(f"Its {command_user} !")
+
+@bot.tree.command(name="last_one_set_spin_points",description="know who is the last admin who set points needed for spins")
+async def last_one_set_spin_points(interraction:discord.Interaction):
+    async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
+        cursor = await db.execute("SELECT command_user FROM spin_points WHERE guild_id = ?",(interraction.guild.id,))
+        result = await cursor.fetchone()
+    command_user = result[0]
+    if command_user == "NULL" or command_user is None:
+        await interraction.response.send_message("No one set points needed for spins in this server")
+    else:
+        await interraction.response.send_message(f"Its {command_user} !")
 
 @bot.tree.command(name="setwelcome",description="set welcome channel&mesg |display_name=name|member.name=username|member.mention=mention")
 @discord.app_commands.checks.has_permissions(administrator=True)
@@ -239,6 +363,8 @@ async def helpsetleveling_by_games(interraction : discord.Interaction):
 on_join_locks = {}
 @bot.event
 async def on_member_join(member):
+    if member.bot:
+        return
     global invites_data
     global on_join_locks
     if member.guild.id not in on_join_locks:
