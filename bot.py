@@ -84,6 +84,37 @@ def digitkey_to_floatkey(dict_:dict,big_int_key:bool):
     return dict_
 
 #========= BUTTONS =========
+class Spin_RevealBouttons(discord.ui.View):
+    def __init__(self,user,spin_resulte):
+        super().__init__(timeout=12)
+        self.user = user
+        self.message = None
+        self.spin_resulte = spin_resulte
+    @discord.ui.button(label="Reveal", style=discord.ButtonStyle.green)
+    async def reveal(self,interraction:discord.Interaction,button:discord.ui.Button):
+        if interraction.user.id != self.user.id:
+            await interraction.response.send_message("That boutton is not for youu!!!",ephemeral=True)
+            return
+        try:
+            await interraction.response.edit_message(content=(f"{self.user.mention} Your spin resulte is {self.spin_resulte} !"),
+                                               attachments=[],
+                                               embed=None,
+                                               view=None)
+        except discord.NotFound:
+            if self.message is not None:
+                await interraction.response.send_message(f"{self.user.mention} Your spin resulte is {self.spin_resulte} !")
+            else:
+                pass
+    async def on_timeout(self):
+        if self.message is not None:
+            try:
+                await self.message.edit(content=(f"{self.user.mention} Your spin resulte is {self.spin_resulte} !"),
+                                       attachments=[],
+                                       embed=None,
+                                       view=None)
+            except discord.NotFound:
+                pass
+spin_lock = {}
 class SpinBouttons(discord.ui.View):
     def __init__(self,user_id,needed_points):
         super().__init__(timeout=20)
@@ -101,56 +132,15 @@ class SpinBouttons(discord.ui.View):
         if self.user_id != interraction.user.id:
             await interraction.response.send_message("This button is not for you!!!",ephemeral=True)
         else:
-            spin_parameters = await read_json("spin_parameters.json")
-            spin_parameters = digitkey_to_floatkey(spin_parameters,True)
-            normal_points = self.needed_points[0]
-            if interraction.guild.id not in spin_parameters:
-                await interraction.response.send_message("The admins didnt set normal items to spin !")
-                return
-            command_user = None
-            for i in spin_parameters[interraction.guild.id].keys():
-                command_user = i
-            spin_parameters = spin_parameters[interraction.guild.id][command_user]
-            async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
-                cursor = await db.execute("SELECT points FROM invite_points WHERE (guild_id,user_id) = (?,?)",(interraction.guild.id,interraction.user.id))
-                results = await cursor.fetchone()
-            if results is None:
-                user_points = 0
-            else:
-                user_points = results[0]
-            if user_points < normal_points:
-                await interraction.response.send_message(f"{interraction.user.mention} You dont have enough points ! You need at least {normal_points} point for a spin and {self.needed_points[1]} points for a legendary one",ephemeral=True)
-            else:
-                spin_pourc = random.random()
-                if spin_pourc == 1:
-                    spin_pourc -= 0.01
-                elif spin_pourc == 0:
-                    spin_pourc += 0.01
-                spin_resultes = []
-                cumulative = 0
-                spin_parameters = arrange_dict(spin_parameters)
-                for thing, pourc in spin_parameters.items():
-                    cumulative += pourc
-                    if (spin_pourc < cumulative or math.isclose(spin_pourc,cumulative)) and spin_pourc > (cumulative - pourc):
-                        spin_resultes.append(thing)
-                if len(spin_resultes) > 1:
-                    spin_resulte = random.choice(spin_resultes)
-                else:
-                    spin_resulte = spin_resultes[0]
-                await interraction.response.send_message(f"{interraction.user.mention} Your spin resulte is {spin_resulte} !")
-                async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
-                    await db.execute("INSERT OR REPLACE INTO invite_points (guild_id,user_id,points) VALUES (?,?,?)",(interraction.guild.id,interraction.user.id,user_points-normal_points))
-                    await db.commit()
-    @discord.ui.button(label="Legendary Spin", style=discord.ButtonStyle.green)
-    async def legendary_spin(self,interraction:discord.Interaction,button:discord.ui.Button):
-            if self.user_id != interraction.user.id:
-                await interraction.response.send_message("This button is not for you!!!",ephemeral=True)
-            else:
-                spin_parameters = await read_json("legendary_spin_parameters.json")
+            global spin_lock
+            if not self.user_id in spin_lock:
+                spin_lock[self.user_id] = asyncio.Lock()
+            async with spin_lock[self.user_id]:
+                spin_parameters = await read_json("spin_parameters.json")
                 spin_parameters = digitkey_to_floatkey(spin_parameters,True)
-                legendary_points = self.needed_points[1]
+                normal_points = self.needed_points[0]
                 if interraction.guild.id not in spin_parameters:
-                    await interraction.response.send_message("The admins didnt set legendary items to spin !")
+                    await interraction.response.send_message("The admins didnt set normal items to spin !")
                     return
                 command_user = None
                 for i in spin_parameters[interraction.guild.id].keys():
@@ -163,8 +153,8 @@ class SpinBouttons(discord.ui.View):
                     user_points = 0
                 else:
                     user_points = results[0]
-                if user_points < legendary_points:
-                    await interraction.response.send_message(f"{interraction.user.mention} You dont have enough points ! You need at least {self.needed_points[0]} point for a spin and {legendary_points} points for a legendary one",ephemeral=True)
+                if user_points < normal_points:
+                    await interraction.response.send_message(f"{interraction.user.mention} You dont have enough points ! You need at least {normal_points} point for a spin and {self.needed_points[1]} points for a legendary one",ephemeral=True)
                 else:
                     spin_pourc = random.random()
                     if spin_pourc == 1:
@@ -182,10 +172,69 @@ class SpinBouttons(discord.ui.View):
                         spin_resulte = random.choice(spin_resultes)
                     else:
                         spin_resulte = spin_resultes[0]
-                    await interraction.response.send_message(f"{interraction.user.mention} Your spin resulte is {spin_resulte} !")
+                    video_message = None
+                    file_video = discord.File(os.path.join(cur_folder,"Normal_spin.mp4"),filename="Normal_spin.mp4")
+                    reveal_button = Spin_RevealBouttons(user=interraction.user,spin_resulte=spin_resulte)
+                    await interraction.response.send_message(file=file_video,view=reveal_button,ephemeral=True)
+                    video_message = await interraction.original_response()
+                    reveal_button.message = video_message
                     async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
-                        await db.execute("INSERT OR REPLACE INTO invite_points (guild_id,user_id,points) VALUES (?,?,?)",(interraction.guild.id,interraction.user.id,user_points-legendary_points))
+                        await db.execute("INSERT OR REPLACE INTO invite_points (guild_id,user_id,points) VALUES (?,?,?)",(interraction.guild.id,interraction.user.id,user_points-normal_points))
                         await db.commit()
+    @discord.ui.button(label="Legendary Spin", style=discord.ButtonStyle.green)
+    async def legendary_spin(self,interraction:discord.Interaction,button:discord.ui.Button):
+            if self.user_id != interraction.user.id:
+                await interraction.response.send_message("This button is not for you!!!",ephemeral=True)
+            else:
+                global spin_lock
+                if self.user_id not in spin_lock:
+                    spin_lock[self.user_id] = asyncio.Lock()
+                async with spin_lock[self.user_id]:
+                    spin_parameters = await read_json("legendary_spin_parameters.json")
+                    spin_parameters = digitkey_to_floatkey(spin_parameters,True)
+                    legendary_points = self.needed_points[1]
+                    if interraction.guild.id not in spin_parameters:
+                        await interraction.response.send_message("The admins didnt set legendary items to spin !")
+                        return
+                    command_user = None
+                    for i in spin_parameters[interraction.guild.id].keys():
+                        command_user = i
+                    spin_parameters = spin_parameters[interraction.guild.id][command_user]
+                    async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
+                        cursor = await db.execute("SELECT points FROM invite_points WHERE (guild_id,user_id) = (?,?)",(interraction.guild.id,interraction.user.id))
+                        results = await cursor.fetchone()
+                    if results is None:
+                        user_points = 0
+                    else:
+                        user_points = results[0]
+                    if user_points < legendary_points:
+                        await interraction.response.send_message(f"{interraction.user.mention} You dont have enough points ! You need at least {self.needed_points[0]} point for a spin and {legendary_points} points for a legendary one",ephemeral=True)
+                    else:
+                        spin_pourc = random.random()
+                        if spin_pourc == 1:
+                            spin_pourc -= 0.01
+                        elif spin_pourc == 0:
+                            spin_pourc += 0.01
+                        spin_resultes = []
+                        cumulative = 0
+                        spin_parameters = arrange_dict(spin_parameters)
+                        for thing, pourc in spin_parameters.items():
+                            cumulative += pourc
+                            if (spin_pourc < cumulative or math.isclose(spin_pourc,cumulative)) and spin_pourc > (cumulative - pourc):
+                                spin_resultes.append(thing)
+                        if len(spin_resultes) > 1:
+                            spin_resulte = random.choice(spin_resultes)
+                        else:
+                            spin_resulte = spin_resultes[0]
+                        video_message = None
+                        file_video = discord.File(os.path.join(cur_folder,"Legendary_spin.mp4"),filename="Legendary_spin.mp4")
+                        reveal_button = Spin_RevealBouttons(user=interraction.user,spin_resulte=spin_resulte)
+                        await interraction.response.send_message(file=file_video,view=reveal_button,ephemeral=True)
+                        video_message = await interraction.original_response()
+                        reveal_button.message = video_message
+                        async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
+                            await db.execute("INSERT OR REPLACE INTO invite_points (guild_id,user_id,points) VALUES (?,?,?)",(interraction.guild.id,interraction.user.id,user_points-legendary_points))
+                            await db.commit()
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.green)
     async def cancel(self,interraction:discord.Interaction,button:discord.ui.Button):
             if self.user_id != interraction.user.id:
@@ -212,6 +261,7 @@ class LastOne_Set_SpinSettings(discord.ui.View):
     async def who_set_points_for_spins(self,interraction:discord.Interaction,button:discord.Button):
         if self.user_id != interraction.user.id:
             await interraction.response.send_message("This button is not for you!!!",ephemeral=True)
+            return
         async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
             cursor = await db.execute("SELECT command_user FROM spin_points WHERE guild_id = ?",(interraction.guild.id,))
             result = await cursor.fetchone()
@@ -235,7 +285,7 @@ class LastOne_Set_SpinSettings(discord.ui.View):
                 command_user = i
             await interraction.response.send_message(f"Its {command_user} !",ephemeral=True)
     @discord.ui.button(label="who set legendary spin items", style=discord.ButtonStyle.green)
-    async def who_set_spin_normal_items(self,interraction:discord.Interaction,button:discord.Button):
+    async def who_set_spin_legendary_items(self,interraction:discord.Interaction,button:discord.Button):
         if self.user_id != interraction.user.id:
             await interraction.response.send_message("This button is not for you!!!",ephemeral=True)
             return
