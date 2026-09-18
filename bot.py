@@ -697,7 +697,7 @@ async def helpsetleveling_by_games(interraction : discord.Interaction):
 #========= EVENTS =========
 on_join_locks = {}
 @bot.event
-async def on_member_join(member):
+async def on_member_join(member:discord.Member):
     if member.bot:
         return
     global invites_data
@@ -705,44 +705,85 @@ async def on_member_join(member):
     if member.guild.id not in on_join_locks:
         on_join_locks[member.guild.id] = asyncio.Lock()
     async with on_join_locks[member.guild.id]:
+        now = discord.utils.utcnow()
         invites = await member.guild.invites()
-        missed_invites = []
-        check_missed_invites = 0
+        len_invites = len(invites)
+        len_timer = 0
+        counter = 0
         for invite in invites:
+            global deleted_invites
+            len_timer += 1
             member_used_link = 0
             inviter_id = None
             old_invite_now = None
-            invite_missed = True
+            invite_missed = False
+            if counter == 0:
+                w_del_invite = None
+                w_time = None
             for invite_data in invites_data[member.guild.id]:
                 if invite_data.code == invite.code:
                     old_invite_now = invite_data
-                elif check_missed_invites == 0:
+                else:
                     invite_missed = True
-                    for i in invites:
-                        if invite_data.code == i.code:
-                            invite_missed = False
-                    if invite_missed:
-                        missed_invites.append(invite_data)
             if old_invite_now is not None:
                 if old_invite_now.inviter is not None:
                     inviter_id = old_invite_now.inviter.id
                     member_used_link = invite.uses - old_invite_now.uses
-            elif missed_invites:
-                for missed_invite in missed_invites:
-                    if missed_invite.expires_at is not None :
-                        now = discord.utils.utcnow()
-                        if missed_invite.expires_at > now:
-                            if missed_invite.max_uses > 0:
-                                if missed_invite.uses == (missed_invite.max_uses - 1):
-                                    if missed_invite.inviter is not None:
-                                        inviter_id = missed_invite.inviter.id
-                                        member_used_link = 1
-                    else:
-                        if missed_invite.max_uses > 0:
-                            if missed_invite.uses == (missed_invite.max_uses - 1):
-                                if missed_invite.inviter is not None:
-                                    inviter_id = missed_invite.inviter.id
-                                    member_used_link = 1
+            elif invite_missed and w_del_invite is None:
+                if member.guild.id not in deleted_invites:
+                    return
+                for time,del_invite in deleted_invites[member.guild.id].items():
+                    if del_invite.expires_at is None and (del_invite.max_uses - 1) != del_invite.uses:
+                        continue
+                    if w_del_invite == None:
+                        w_del_invite = del_invite
+                        w_time = time
+                    elif ((del_invite.max_uses - 1) != del_invite.uses and (w_del_invite.max_uses - 1) != w_del_invite.uses) or ((del_invite.max_uses - 1) == del_invite.uses and (w_del_invite.max_uses - 1) == w_del_invite.uses):
+                        if del_invite.expires_at is None: 
+                            if abs(w_time - now) >= abs(time - now): 
+                                w_del_invite = del_invite
+                                w_time = time
+                        else: 
+                            if (now - w_del_invite.expires_at) >= (now - del_invite.expires_at) and (now - del_invite.expires_at) >= 0: 
+                                w_del_invite = del_invite
+                                w_time = time
+                    elif (del_invite.max_uses - 1) == del_invite.uses:
+                        w_del_invite = del_invite
+                        w_time = time
+                if (w_del_invite.max_uses - 1) == w_del_invite.uses:
+                    inviter_id = w_del_invite.inviter.id
+                    member_used_link = 1
+                elif (now - w_del_invite.expires_at).total_seconds() >= 0 and (now - w_del_invite.expires_at).total_seconds() <= 0.6 : #0.6 is just a guess here there is no constant number or 100% way to know
+                    inviter_id = w_del_invite.inviter.id
+                    member_used_link = 1
+            if len_invites == len_timer and invite_missed and w_del_invite is None:
+                await asyncio.sleep(0.3)
+                if member.guild.id not in deleted_invites:
+                    return
+                for time,del_invite in deleted_invites[member.guild.id].items():
+                    if del_invite.expires_at is None and (del_invite.max_uses - 1) != del_invite.uses:
+                        continue
+                    if w_del_invite == None:
+                        w_del_invite = del_invite
+                        w_time = time
+                    elif ((del_invite.max_uses - 1) != del_invite.uses and (w_del_invite.max_uses - 1) != w_del_invite.uses) or ((del_invite.max_uses - 1) == del_invite.uses and (w_del_invite.max_uses - 1) == w_del_invite.uses):
+                        if del_invite.expires_at is None: 
+                            if abs(w_time - now) >= abs(time - now): 
+                                w_del_invite = del_invite
+                                w_time = time
+                        else: 
+                            if (now - w_del_invite.expires_at) >= (now - del_invite.expires_at) and (now - del_invite.expires_at) >= 0: 
+                                w_del_invite = del_invite
+                                w_time = time
+                    elif (now - w_del_invite.expires_at).total_seconds() >= 0 and (del_invite.max_uses - 1) == del_invite.uses:
+                        w_del_invite = del_invite
+                        w_time = time
+                if (w_del_invite.max_uses - 1) == w_del_invite.uses:
+                    inviter_id = w_del_invite.inviter.id
+                    member_used_link = 1
+                elif (now - w_del_invite.expires_at).total_seconds() <= 0.6: #0.6 is just a guess here there is no constant number or 100% way to know
+                    inviter_id = w_del_invite.inviter.id
+                    member_used_link = 1
             if inviter_id is not None:
                 if inviter_id != member.id and member_used_link != 0:
                     invite_members = await read_json("invite_members.json")
@@ -765,7 +806,8 @@ async def on_member_join(member):
                     async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
                         await db.execute("INSERT OR REPLACE INTO invite_points (guild_id,user_id,points) VALUES (?,?,?)",(member.guild.id,inviter_id,total_points))
                         await db.commit()
-            check_missed_invites = 1
+            counter += 1
+        deleted_invites[member.guild.id] = {}
         invites_data[member.guild.id] = invites
     async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
         cursor = await db.execute("SELECT enabled, channel_id, welcome_mess FROM welcome_settings WHERE guild_id = ?",(member.guild.id,))
@@ -799,19 +841,38 @@ async def on_member_join(member):
             await member.guild.get_channel(channel_id).send(f"{message}")
 
 @bot.event
-async def on_message(message):
+async def on_message(message:discord.Message):
     if message.author.bot:
         if message.author != bot.user:
             async with aiosqlite.connect(os.path.join(cur_folder,"data_bot.db")) as db:
                 pass
 
 @bot.event
-async def on_guild_join(guild):
+async def on_guild_join(guild:discord.Guild):
     global invites_data
     invites_data[guild.id] = await guild.invites()
     print("joined a new server!!!!")
     if guild.system_channel:
         await guild.system_channel.send("Thanks for adding us in this server")
+
+deleted_invites = {}
+@bot.event
+async def on_invite_delete(invite:discord.Invite):
+    global deleted_invites
+    global invites_data
+    if invite.guild.id not in deleted_invites:
+        deleted_invites[invite.guild.id] = {}
+        now = discord.utils.utcnow()
+        deleted_invites[invite.guild.id][now] = invite
+    else:
+        now = discord.utils.utcnow()
+        deleted_invites[invite.guild.id][now] = invite
+    invites_data[invite.guild.id] = await invite.guild.invites()
+
+@bot.event
+async def on_invite_create(invite:discord.Invite):
+      global invites_data
+      invites_data[invite.guild.id] = await invite.guild.invites()
 
 
 
